@@ -53,7 +53,7 @@ interface TokenResolver{
 }
 
 interface ENSRegistry {
-    function setSubnodeOwner(bytes32 node, bytes32 label, address owner) external;
+    function setSubnodeOwner(bytes32 node, bytes32 label, address owner) external virtual returns(bytes32);
     function owner(bytes32 node) external view returns (address);
     function setResolver(bytes32 node, address resolver) external;
     function setOwner(bytes32 node, address owner) external;
@@ -205,11 +205,12 @@ contract ENSTokenManager is Ownable{
     function toHexString(address addr) public pure returns (string memory) {
         bytes memory alphabet = "0123456789abcdef";
         bytes memory data = abi.encodePacked(addr);
-        bytes memory str = new bytes(data.length * 2);
-        
+        bytes memory str = new bytes(2+data.length * 2);
+        str[0] = "0";
+        str[1] = "x";
         for (uint i = 0; i < data.length; i++) {
-            str[i*2] = alphabet[uint(uint8(data[i] >> 4))];
-            str[1+i*2] = alphabet[uint(uint8(data[i] & 0x0F))];
+            str[2+i*2] = alphabet[uint(uint8(data[i] >> 4))];
+            str[3+i*2] = alphabet[uint(uint8(data[i] & 0x0F))];
         }
         return string(str);
     }
@@ -229,10 +230,11 @@ contract ENSTokenManager is Ownable{
 
     function computeSubnode(bytes32 parentNode, string memory label) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(parentNode, keccak256(abi.encodePacked(label))));
+        //return keccak256(abi.encodePacked(parentNode, (label)));
     }
 
     function renderSpecs(address erc20Token) public view  returns (string memory symbolLowerCase, bytes32 symbolLabel,
-        bytes32 subRoot,bytes32 subRoot2,  bytes32 subLabel, bytes32 addressLabel, string memory addressLower) {
+        bytes32 subRoot,/*bytes32 fullNode,*/  bytes32 subLabel, bytes32 addressLabel, string memory addressLower) {
         require(!tokensExist[erc20Token], "token already added");
         require(checkERC20Metadata(erc20Token), "Token not supporting the minimal interface");
         
@@ -243,19 +245,19 @@ contract ENSTokenManager is Ownable{
 
         addressLabel = keccak256(bytes(addressLower));
 
-        subRoot = computeSubnode(rootNode, symbolLowerCase);
+        subRoot = computeSubnode(rootNode, addressLower);
         subLabel = keccak256(bytes(toLowerCase(symbol)));
-        subRoot2 = computeSubnode(subRoot, addressLower);
+        //fullNode = computeSubnode(subRoot, addressLower);
 
 
     }
 
     function nodeExists(address erc20Token) public view returns (bool exists) {
         
-    (string memory symbolLowerCase, bytes32 symbolLabel, bytes32 subRoot,bytes32 subRoot2 ,
+    (string memory symbolLowerCase, bytes32 symbolLabel, bytes32 subRoot ,
         bytes32 subLabel, bytes32 addressLabel, string memory addressLower) = renderSpecs(erc20Token);
 
-    return vnsRegistry.recordExists(subRoot2);
+    return vnsRegistry.recordExists(subRoot);
 
     }
 
@@ -267,34 +269,36 @@ contract ENSTokenManager is Ownable{
         
         string memory symbol = IExtendedERC20(erc20Token).symbol();
         string memory name = IExtendedERC20(erc20Token).name();
-        (string memory symbolLowerCase, bytes32 symbolLabel, bytes32 subRoot,bytes32 subRoot2 ,
+        (string memory symbolLowerCase, bytes32 symbolLabel, bytes32 subRoot,
         bytes32 subLabel, bytes32 addressLabel, string memory addressLower) = renderSpecs(erc20Token);
 
 
-        //TODO do i want it beeing lowercased
+        require(vnsRegistry.recordExists(subRoot) == false, "This record already exist!");
 
-        require(vnsRegistry.recordExists(subRoot2) == false, "This record already exits!");
+        bytes32 node = vnsRegistry.setSubnodeOwner(rootNode,  addressLabel, address(this));
+        require(subRoot == node, "Something went wrong in the calculation " );
 
-        vnsRegistry.setSubnodeRecord(rootNode,  symbolLabel, address(this) , resolver, 0 );
-
+        vnsRegistry.setResolver(node, resolver);
 
         //set the different fast values
-        TokenResolver(resolver).setAddr(subRoot2, erc20Token);
-        TokenResolver(resolver).setName(subRoot2, addressLower);
+        TokenResolver(resolver).setAddr(node, erc20Token);
+        TokenResolver(resolver).setName(node, addressLower);
 
         
-        emit AddToken(subRoot2, address(erc20Token), name, symbol, addressLower);
+        emit AddToken(node, address(erc20Token), name, symbol, addressLower);
         //TODO add the name and such
     }
 
     
 
     function removeToken(address erc20Token)  public onlyOwner{
-        (string memory symbolLowerCase, bytes32 symbolLabel, bytes32 subRoot, bytes32 subRoot2 ,
+        (string memory symbolLowerCase, bytes32 symbolLabel, bytes32 subRoot,
         bytes32 subLabel, bytes32 addressLabel, string memory addressLower) = renderSpecs(erc20Token);
+        require(vnsRegistry.recordExists(subRoot) != false, "This token does not exist!");
+        require(vnsRegistry.owner(subRoot) != 0x0000000000000000000000000000000000000000, "This token does not exist!");
 
-        emit RemoveToken(subRoot2, address(erc20Token));
-        vnsRegistry.setOwner(subRoot2, 0x0000000000000000000000000000000000000000);
+        emit RemoveToken(subRoot, address(erc20Token));
+        vnsRegistry.setOwner(subRoot, 0x0000000000000000000000000000000000000000);
     }
 
     function setSubdomainResolver(bytes32 label, address _resolver) public onlyOwner {

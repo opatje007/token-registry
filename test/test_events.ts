@@ -1,6 +1,7 @@
 //import { ethers } from "hardhat";
 import { ethers } from "hardhat";
 //import TokenManagerArtifact from "./artifacts/contracts/token_registry/ENSTokenManager.sol/ENSTokenManager.json";
+import ENSArtificat from "../artifacts/@ensdomains/ens/contracts/ENS.sol/ENS.json";
 import { Contract } from "ethers";
 import { ens_normalize } from '@adraffy/ens-normalize'; // or require()
 import { labelhash, namehash } from "viem";
@@ -17,8 +18,6 @@ function getRandomInt(max:number) {
   return Math.floor(Math.random() * max);
 }
 
-const ensRegistryABI = [ "function setOwner(bytes32 node, address owner) external" ]; // Simplified ABI for demonstration
-const ensRegistry = new ethers.Contract(ensRegistryAddress, ensRegistryABI, ethers.provider);
 
 describe("TokenManager", function () {
   let tokenManager:any;
@@ -39,7 +38,7 @@ describe("TokenManager", function () {
     const TestErc20 = await ethers.getContractFactory("TestShtERC20");
     console.log("deploying: ", "shtcoin" + randomNumber )
     testErc20 = await TestErc20.deploy("shtcoin" + randomNumber, "sht" + randomNumber);
-    const ENSRegistry = new Contract(ensRegistryAddress, ensRegistryABI, owner);
+    ENSRegistry = new Contract(ensRegistryAddress, ENSArtificat.abi, owner);
 
     const TokenManager = await ethers.getContractFactory("ENSTokenManager");
     const TokenRegistry = await ethers.getContractFactory("TokenRegistryResolver");
@@ -50,8 +49,11 @@ describe("TokenManager", function () {
     console.log("deploying: ", "tokenRegistery" )
     tokenRegistery = await TokenRegistry.deploy(ensRegistryAddress, await tokenManager.getAddress());
     await tokenManager.setResolver(await tokenRegistery.getAddress())
+
+
     
     //Deployed contracts
+    console.log("exists ", await tokenManager.nodeExists("0xDC3Aa001FFa24764a2b7481824dD966A29b773Ff"))
     console.log("TokenManager ", await tokenManager.getAddress())
     console.log("TokenRegistry ", await tokenRegistery.getAddress())
     console.log("testErc20 shtcoin_" + randomNumber, await testErc20.getAddress())
@@ -112,18 +114,58 @@ describe("TokenManager", function () {
     console.log(await tokenManager.renderSpecs(shtCnAddr))
     console.log(await tokenManager.nodeExists(shtCnAddr))
 
-    const domain = ens_normalize(shtCnAddr.substring(2).toLowerCase() + '.erc20.token-registry.vet')
+    const domain = ens_normalize(shtCnAddr.toLowerCase() + '.erc20.token-registry.vet')
+    const rootDomain = namehash('erc20.token-registry.vet')
     console.log("domain: ", domain)
     const newNode = namehash(domain);  
     console.log("newNode: ", newNode)
 
 
     //   emit AddToken(subRoot2, address(erc20Token), name, symbol, addressLower);
+    //     event AddrChanged(bytes32 indexed node, address a);
+    const subdomain = '0x'+require('js-sha3').keccak_256(shtCnAddr.toLowerCase())
+    console.log(rootDomain, subdomain)
+
+    const tokenManageraddress = await tokenManager.getAddress();
+
+      
+    await expect(tokenManager.removeToken(shtCnAddr))
+    .to.be.revertedWith("This token does not exist!");
+
     await expect(tokenManager.addTokenSubdomain(shtCnAddr))
     .to.emit(tokenManager, "AddToken") 
-    .withArgs(newNode,shtCnAddr,name, symbol,shtCnAddr.substring(2).toLowerCase())
+    .withArgs(newNode,shtCnAddr,name, symbol, shtCnAddr.toLowerCase())
+    .to.emit(tokenRegistery, "AddrChanged") 
+    .withArgs(newNode,shtCnAddr)
     .to.emit(tokenRegistery, "NameChanged")
-    .withArgs(node, shtCnAddr.substring(2).toLowerCase()); 
-  });
+    .withArgs(newNode, shtCnAddr.toLowerCase())
+    .to.emit(ENSRegistry, "NewOwner")
+    .withArgs(rootDomain, subdomain, tokenManageraddress);
+
+  //Expect the sametoken to fail
+  await expect(tokenManager.addTokenSubdomain(shtCnAddr))
+      .to.be.revertedWith("This record already exist!");
+
+// /        emit RemoveToken(subRoot, address(erc20Token));
+
+    await expect(tokenManager.removeToken(shtCnAddr))
+    .to.emit(tokenManager, "RemoveToken") 
+    .withArgs(newNode,shtCnAddr)
+
+    
+  await expect(tokenManager.removeToken(shtCnAddr))
+  .to.be.revertedWith("This token does not exist!");
+  
+  await expect(tokenManager.addTokenSubdomain(shtCnAddr))
+  .to.emit(tokenManager, "AddToken") 
+  .withArgs(newNode,shtCnAddr,name, symbol, shtCnAddr.toLowerCase())
+  .to.emit(tokenRegistery, "AddrChanged") 
+  .withArgs(newNode,shtCnAddr)
+  .to.emit(tokenRegistery, "NameChanged")
+  .withArgs(newNode, shtCnAddr.toLowerCase())
+  .to.emit(ENSRegistry, "NewOwner")
+  .withArgs(rootDomain, subdomain, tokenManageraddress);
+
+  });  
 });
 
